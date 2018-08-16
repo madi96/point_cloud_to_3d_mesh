@@ -1,0 +1,10 @@
+<launch>
+    <arg name="ns" default="PointCloudTo3dMesh"/>
+    <arg name="exec_name" default="PointCloudTo3dMesh"/>
+   
+    <rosparam command="load" file="$(find point_cloud_to_3d_mesh)/launch/params/kinectTopics.yml" ns="$(arg ns)"/>
+
+    <node name="$(arg exec_name)" pkg="point_cloud_to_3d_mesh" type="$(arg exec_name)"  output="screen">
+
+    </node>
+</launch>

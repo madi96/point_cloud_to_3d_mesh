@@ -1,0 +1,5 @@
+rgbTopic: "/kinect2/qhd/image_color"
+depthTopic: "/kinect2/qhd/image_depth_rect"
+rgbInfoTopic: "/kinect2/qhd/camera_info"
+depthInfoTopic: "/kinect2/qhd/camera_info"
+cloudTopic: "/kinect2/qhd/points"
