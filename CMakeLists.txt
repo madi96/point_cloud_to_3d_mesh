@@ -11,6 +11,7 @@ set(CATKIN_COMMON_COMPONENTS cv_bridge
                              image_transport
                              image_geometry
                              tf
+			     pcl_ros
                              geometry_msgs
                              sensor_msgs
 			     rgbd_utils
