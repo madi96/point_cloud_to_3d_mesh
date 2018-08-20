@@ -1,40 +1,41 @@
 #include <PointCloudTo3dMesh.h>
+#include <pcl_ros/transforms.h>
 
 PointCloudTo3dMesh::PointCloudTo3dMesh(){
   init();
 }
 
 PointCloudTo3dMesh::~PointCloudTo3dMesh(){
-  _rgbdSub.reset();
-  _pointCloudPub.reset();
-  _cloud.reset();
-  _viewer.reset();
+  rgbd_sub_.reset();
+  point_cloud_pub_.reset();
+  //cloud_.reset();
+  viewer_.reset();
 }
 
 
 void PointCloudTo3dMesh::init() {
 
-  _cloud.reset(new pcl::PointCloud<PointT>);
+  //cloud_.reset(new pcl::PointCloud<PointT>);
       
   XmlRpc::XmlRpcValue params;
 
-  _nh.getParam("/PointCloudTo3dMesh", params);
+  nh_.getParam("/PointCloudTo3dMesh", params);
   std::cout<<"params:"<<params<<std::endl;
-  _rgbdSub.reset(new rgbd_utils::RGBD_Subscriber(
+  rgbd_sub_.reset(new rgbd_utils::RGBD_Subscriber(
                       params["rgbInfoTopic"],
                       params["rgbTopic"],
                       params["depthInfoTopic"],
                       params["depthTopic"],
-                      _nh));
+                      nh_));
     
-  _pointCloudPub.reset(new ros::Publisher(_nh.advertise<sensor_msgs::PointCloud2>("PointCloud",5)));
+  point_cloud_pub_.reset(new ros::Publisher(nh_.advertise<sensor_msgs::PointCloud2>("point_cloud",5)));
 
-  // Init the viewer
-  _viewer.reset( new pcl::visualization::PCLVisualizer ("3D Viewer ('Esc': close viewer; 'u': update mesh; 's': save mesh)"));
-  _viewer->setBackgroundColor (0, 0, 0);
-  _viewer->addCoordinateSystem (1.0);
-  _viewer->initCameraParameters ();
-  _viewer->registerKeyboardCallback(&PointCloudTo3dMesh::keyboardEventOccurred, *this);
+  //Init the viewer
+  viewer_.reset( new pcl::visualization::PCLVisualizer ("3D Viewer ('Esc': close viewer; 'u': update mesh; 's': save mesh)"));
+  viewer_->setBackgroundColor (0, 0, 0);
+  viewer_->addCoordinateSystem (1.0);
+  viewer_->initCameraParameters ();
+  viewer_->registerKeyboardCallback(&PointCloudTo3dMesh::keyboardEventOccurred, *this);
 }
 
 
@@ -44,18 +45,18 @@ void PointCloudTo3dMesh::keyboardEventOccurred (const pcl::visualization::Keyboa
   if( event.keyDown() ){
     if (pressed == "Escape"){
       printInfo("Viewer Callback: 'Esc' was pressed -> closing the viewer");
-      _viewer->close();
+      viewer_->close();
       viewerTerminated=true;
 
     } else if (pressed == "u"){
       printInfo("Viewer Callback: 'u' was pressed -> updating the 3D mesh");
-      _update = true;
-      meshID ++;
+      update_ = true;
+      mesh_id_ ++;
 
     }else if (pressed == "s"){
       printInfo("Viewer Callback: 's' was pressed -> saving the 3D mesh");
-      pcl::io::saveVTKFile ("3DMeshFromPointCloud.vtk", _mesh);
-      pcl::io::savePolygonFileSTL("3DMeshFromPointCloud.stl", _mesh);
+      pcl::io::saveVTKFile ("3DMeshFromPointCloud.vtk", mesh_);
+      pcl::io::savePolygonFileSTL("3DMeshFromPointCloud.stl", mesh_);
 	
     }
   }
@@ -199,16 +200,39 @@ void PointCloudTo3dMesh::smoothingAndNormalEstimation(pcl::PointCloud<pcl::Point
   mls.setComputeNormals (true);
 
   // Set parameters
+  printInfo("setting params");
   mls.setInputCloud (inputCloud);
   mls.setPolynomialFit (true);
   mls.setSearchMethod (kDTree);
   mls.setSearchRadius (0.03);
-
   // Reconstruct normals
+  printInfo("Reconstruct normals");
   mls.process (mls_points);
   //movingLeastSquarePointsPtr.reset(&mls_points, [](pcl::PointCloud<pcl::PointNormal>* ptr){std::cout<<"not deleating the instance"<<std::endl;});
   * movingLeastSquarePointsPtr = mls_points;
 }
+
+void PointCloudTo3dMesh::transformToCloudOrigin(pcl::PointCloud<PointT>::Ptr inputCloud, 
+						pcl::PointCloud<PointT>::Ptr outputCloud){
+  printInfo("Transforming the point cloud to the new frame");
+  tf::StampedTransform transform;
+  pcl::PointXYZ v;
+  const pcl::PointCloud<PointT> inputCloudd = *inputCloud;
+  const  sensor_msgs::PointCloud2 input_ros_cloud_msg; 
+  sensor_msgs::PointCloud output_ros_cloud_msg;
+  const std::string  target_frame = "tf_broadcaster";
+  const std::string base_frame = "kinect2_rgb_optical_frame";
+
+  //pcl::toROSMsg (*inputCloud, input_ros_cloud_msg);
+  outputCloud->header.frame_id = target_frame;
+  inputCloud->header.frame_id = base_frame;
+  pcl_ros::transformPointCloud (target_frame,*inputCloud ,*outputCloud , listener_);
+
+
+}
+
+
+
 
 void PointCloudTo3dMesh::get3DMeshFromPointCloud() {
   printInfo("Getting the 3D mesh from the point cloud");
@@ -217,22 +241,24 @@ void PointCloudTo3dMesh::get3DMeshFromPointCloud() {
   pcl::PointCloud<PointT>::Ptr inlinersCloud(new pcl::PointCloud<PointT>);
   pcl::PointCloud<PointT>::Ptr outlinersCloud (new pcl::PointCloud<PointT>);
 
-  rgbd_utils::RGBD_to_Pointcloud converter(_rgbdSub->get_depthConstPtr(),
-					   _rgbdSub->get_rgbConstPtr(),
-					   _rgbdSub->get_rgb_infoConstPtr());
+  rgbd_utils::RGBD_to_Pointcloud converter(rgbd_sub_->get_depthConstPtr(),
+					   rgbd_sub_->get_rgbConstPtr(),
+					   rgbd_sub_->get_rgb_infoConstPtr());
   converter.convert();
 
   // Publishing the point cloud
   sensor_msgs::PointCloud2 rosCloudMsg=converter.get_pointcloud();
-  //pcl::toROSMsg(*(_cloud),cc_msg);
-  rosCloudMsg.header = _rgbdSub->get_depth().header;
+  //pcl::toROSMsg(*(cloud_),cc_msg);
+  rosCloudMsg.header = rgbd_sub_->get_depth().header;
   //(converter.get_pointcloud()).header = _rgbd_sub->get_depth().header;
-  _pointCloudPub->publish(rosCloudMsg);
+
 	
   //compute 3d mesh
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<PointT>);
   pcl::fromROSMsg(rosCloudMsg,*(cloud));
+ 
   if (!(cloud->empty())){
+
     // Create the filtering object
     pcl::PointCloud<pcl::PointXYZ>::Ptr filteredCloud (new pcl::PointCloud<pcl::PointXYZ>);
     // Filter to remove the outliers
@@ -242,28 +268,44 @@ void PointCloudTo3dMesh::get3DMeshFromPointCloud() {
     // Plane segmentation
     planeModelSegmentation(filteredCloud,inlinersCloud, outlinersCloud);
 
+    //get the cloud transformed to origin
+    pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_cloud (new pcl::PointCloud<PointT>);
+    transformed_cloud->resize(outlinersCloud->width * outlinersCloud->height);
+    transformed_cloud->width = outlinersCloud->width;
+    transformed_cloud->height = outlinersCloud->height;
+    transformToCloudOrigin(outlinersCloud, transformed_cloud);
+    pcl::toROSMsg (*transformed_cloud, rosCloudMsg);
+    point_cloud_pub_->publish(rosCloudMsg);
+
+    //normal estimation only
+    // pcl::PointCloud<pcl::PointNormal>::Ptr normals;
+    // normals = normalEstimation(transformed_cloud);
+
     //Smoothing and normal estimation
     pcl::PointCloud<pcl::PointNormal>::Ptr movingLeastSquaresPointsPtr(new  pcl::PointCloud<pcl::PointNormal>) ;
-    smoothingAndNormalEstimation(outlinersCloud, movingLeastSquaresPointsPtr);
+    smoothingAndNormalEstimation(transformed_cloud, movingLeastSquaresPointsPtr);
+
+
+ 
 
     //Fast triangulation
     trianglesMesh = fastTriangulation(movingLeastSquaresPointsPtr);
   } else   printWarn("The point cloud is empty");  
-  _mesh=trianglesMesh;
+  mesh_=trianglesMesh;
 }
 
 void PointCloudTo3dMesh::visualizeMesh(){
   printInfo("Visualising the 3D mesh");
-  _update =false;
-  if (_mesh.cloud.width>0 ){
-    if (_viewerEmpty){
-      _viewerEmpty = false;
+  update_ =false;
+  if (mesh_.cloud.width>0 ){
+    if (viewer_empty_){
+      viewer_empty_ = false;
     }else{      
-      _viewer->removePolygonMesh("Mesh_"+std::to_string(meshID-1),0);
+      viewer_->removePolygonMesh("Mesh_"+std::to_string(mesh_id_-1),0);
     }
-    _viewer->addPolygonMesh(_mesh,"Mesh_"+std::to_string(meshID),0);
-    while (!_viewer->wasStopped () && !_update){
-      _viewer->spinOnce (100);
+    viewer_->addPolygonMesh(mesh_,"Mesh_"+std::to_string(mesh_id_),0);
+    while (!viewer_->wasStopped () && !update_){
+      viewer_->spinOnce (100);
       boost::this_thread::sleep (boost::posix_time::microseconds (100000));
 
     }
@@ -276,6 +318,7 @@ int main(int argc, char** argv)
     std::string node_name="pcTo3dMesh";    
     ros::init(argc, argv, node_name);
     PointCloudTo3dMesh pcTo3dMesh;
+    
     while (ros::ok() && !pcTo3dMesh.getViewerStatus() ) {
       pcTo3dMesh.get3DMeshFromPointCloud();
       pcTo3dMesh.visualizeMesh();      
